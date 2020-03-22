@@ -32,8 +32,13 @@ class OpenShiftDiff(object):
             kubernetes.config.load_kube_config()
             _, active_context = kubernetes.config.list_kube_config_contexts()
             self.namespace = active_context['context']['namespace']
+
+        if len(sys.argv) > 1:
+            self.namespace = sys.argv[1]
+
         k8s_client = kubernetes.client.api_client.ApiClient(kubernetes.client.Configuration())
         self.dyn_client = openshift.dynamic.DynamicClient(k8s_client)
+
 
         shutil.rmtree('/tmp/openshift-diff', ignore_errors=True)
         os.makedirs('/tmp/openshift-diff/new', exist_ok=True)
