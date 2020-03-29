@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 
 import base64
-import logging
+import json
 import os
 import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable
 from copy import deepcopy
 
@@ -17,88 +18,71 @@ import urllib3
 import yaml
 from openshift.dynamic.exceptions import NotFoundError
 
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-
-def del_key_in_list(list, key):
-    for item in list:
-        item.pop(key, None)
-
-class OpenShiftDiff(object):
-    def __init__(self):
-        if 'KUBERNETES_PORT' in os.environ:
-            kubernetes.config.load_incluster_config()
-            self.namespace = pathlib.Path('/var/run/secrets/kubernetes.io/serviceaccount/namespace').read_text()
-        else:
-            kubernetes.config.load_kube_config()
-            _, active_context = kubernetes.config.list_kube_config_contexts()
-            self.namespace = active_context['context']['namespace']
-
-        if len(sys.argv) > 1:
-            self.namespace = sys.argv[1]
-
-        k8s_client = kubernetes.client.api_client.ApiClient(kubernetes.client.Configuration())
-        self.dyn_client = openshift.dynamic.DynamicClient(k8s_client)
+SCRIPT_DIR = sys.path[0] if os.path.isdir(sys.path[0]) else os.path.dirname(sys.path[0])
 
 
-        shutil.rmtree('/tmp/openshift-diff', ignore_errors=True)
-        os.makedirs('/tmp/openshift-diff/new', exist_ok=True)
-        os.makedirs('/tmp/openshift-diff/cur', exist_ok=True)
-        documents = yaml.safe_load_all(sys.stdin)
-        for doc in documents:
-        # if isinstance(document, Iterable):
-        #     objects = document
-        # else:
-            objects = doc.get('items', None) or [doc]
-            for obj in objects:
-                obj['metadata']['namespace'] = self.namespace
-                if not 'annotations' in obj['metadata']:
-                    obj['metadata']['annotations'] = {}
+def del_extra_attributes(cur, last, new):
+    if isinstance(cur, dict):
+        for key, val in list(cur.items()):
+            if last and key in last or new and key in new:
+                del_extra_attributes(val, last.get(key) if last else None, new.get(key) if new else None)
+            else:
+                del cur[key]
+    elif isinstance(cur, list):
+        for i, cur_item in enumerate(cur):
+            del_extra_attributes(cur_item, last[i] if last and i < len(last) else None, new[i] if new and i < len(new) else None)
 
-                if obj['kind'] == 'Secret':
-                    #print(obj.get('stringData', {}))
-                    for key, value in obj.get('stringData', {}).items():
-                        obj.setdefault('data', {})[key] = base64.b64encode(value.encode('ascii')).decode('ascii')
-                    obj.pop('stringData', None)
 
-                with open(f"/tmp/openshift-diff/new/{obj['kind']}_{obj['metadata']['name']}.yaml", 'w+') as file:
-                    yaml.dump(obj, file, default_flow_style=False, width=float("inf"))
+# Disable SSL warnings: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#ssl-warnings
+urllib3.disable_warnings()
 
-                obj_client = self.dyn_client.resources.get(api_version = obj['apiVersion'], kind = obj['kind'])
-                with open(f"/tmp/openshift-diff/cur/{obj['kind']}_{obj['metadata']['name']}.yaml", 'w+') as file:
-                    try:
-                        current = obj_client.get(name=obj['metadata']['name'], namespace=self.namespace, export=True)
-                        #if current['metadata'].get('annotations', {}).get('kubectl.kubernetes.io/last-applied-configuration'):
-                        #    current = json.loads(current['metadata']['annotations']['kubectl.kubernetes.io/last-applied-configuration'])
-                        #else:
-                        current = current.to_dict()
-                        current['metadata'].pop('resourceVersion', None)
-                        current['metadata'].pop('generation', None)
-                        current['metadata'].pop('creationTimestamp', None)
-                        current['metadata'].pop('selfLink', None)
-                        current['metadata'].pop('uid', None)
-                        current['metadata'].get('annotations', {}).pop('kubectl.kubernetes.io/last-applied-configuration', None)
-                        current['metadata'].get('annotations', {}).pop('openshift.io/image.dockerRepositoryCheck', None)
-                        current['metadata'].get('annotations', {}).pop('service.alpha.openshift.io/serving-cert-signed-by', None)
-                        current['metadata'].get('annotations', {}).pop('deployment.kubernetes.io/revision', None)
-                        current.get('spec', {}).get('template', {}).get('metadata', {}).pop('creationTimestamp', None)
-                        current.pop('status', None)
+if 'KUBERNETES_PORT' in os.environ:
+    kubernetes.config.load_incluster_config()
+    namespace = pathlib.Path('/var/run/secrets/kubernetes.io/serviceaccount/namespace').read_text()
+else:
+    kubernetes.config.load_kube_config()
+    _, active_context = kubernetes.config.list_kube_config_contexts()
+    namespace = active_context['context']['namespace']
 
-                        yaml.dump(current, file, default_flow_style=False, width=float("inf"))
-                    except NotFoundError:
-                        pass
+if len(sys.argv) > 1:
+    namespace = sys.argv[1]
 
-        color_opt = '--color' #if sys.stdout.isatty() else ''
-        p = subprocess.Popen(f"git --no-pager diff --no-index --minimal {color_opt} /tmp/openshift-diff/cur /tmp/openshift-diff/new | {SCRIPT_DIR}/diff-highlight", shell=True)
-        p.communicate()
-        #diff(self.namespace, obj_client, obj)
-        #print()
+k8s_client = kubernetes.client.api_client.ApiClient(kubernetes.client.Configuration())
+dyn_client = openshift.dynamic.DynamicClient(k8s_client)
 
-if __name__ == '__main__':
-    logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
+with tempfile.TemporaryDirectory() as tmpdir:
+    os.makedirs(f"{tmpdir}/new", exist_ok=True)
+    os.makedirs(f"{tmpdir}/cur", exist_ok=True)
+    documents = yaml.safe_load_all(sys.stdin)
+    for doc in documents:
+        objects = doc.get('items', None) or [doc]
+        for obj in objects:
+            obj['metadata']['namespace'] = namespace
+            if not 'annotations' in obj['metadata']:
+                obj['metadata']['annotations'] = {}
 
-    # Disable SSL warnings: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#ssl-warnings
-    urllib3.disable_warnings()
+            if obj['kind'] == 'Secret':
+                for key, value in obj.get('stringData', {}).items():
+                    obj.setdefault('data', {})[key] = base64.b64encode(value.encode('ascii')).decode('ascii')
+                obj.pop('stringData', None)
 
-    OpenShiftDiff()
+            with open(f"{tmpdir}/new/{obj['kind']}_{obj['metadata']['name']}.yaml", 'w+') as file:
+                yaml.dump(obj, file, default_flow_style=False, width=float("inf"))
 
-#  pyinstaller -y  --clean --add-binary ./diff-highlight:. openshift-diff
+            obj_client = dyn_client.resources.get(api_version = obj['apiVersion'], kind = obj['kind'])
+            with open(f"{tmpdir}/cur/{obj['kind']}_{obj['metadata']['name']}.yaml", 'w+') as file:
+                try:
+                    current = obj_client.get(name=obj['metadata']['name'], namespace=namespace, export=True).to_dict()
+                    last_applied = json.loads(current['metadata'].get('annotations', {}).get('kubectl.kubernetes.io/last-applied-configuration', '{}'))
+                    del_extra_attributes(current, last_applied, obj)
+
+                    yaml.dump(current, file, default_flow_style=False, width=float("inf"))
+                except NotFoundError:
+                    pass
+
+    # subprocess.Popen(f"ls -l {tmpdir}/cur", shell=True)
+
+    color_opt = '--color' #if sys.stdout.isatty() else ''
+    p = subprocess.Popen(f"cd {tmpdir} && git --no-pager diff --no-index --no-prefix --minimal {color_opt} cur new | {SCRIPT_DIR}/diff-highlight", shell=True)
+    p.communicate()
+
