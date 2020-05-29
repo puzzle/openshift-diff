@@ -20,6 +20,14 @@ from openshift.dynamic.exceptions import NotFoundError
 
 SCRIPT_DIR = sys.path[0] if os.path.isdir(sys.path[0]) else os.path.dirname(sys.path[0])
 
+def str_presenter(dumper, data):
+    if isinstance(data, str):
+        if '\n' in data:
+            return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+
+    return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+
+yaml.add_representer(str, str_presenter)
 
 def del_extra_keys(cur, last, new):
     """Delete keys in cur which are neither present in last nor in new, i.e. keys managed by the cluster."""
