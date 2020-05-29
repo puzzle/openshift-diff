@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import base64
 import hashlib
 import json
@@ -76,11 +77,21 @@ else:
     kubernetes.config.load_kube_config()
     _, active_context = kubernetes.config.list_kube_config_contexts()
     namespace = active_context['context']['namespace']
+k8s_config = kubernetes.client.Configuration()
 
-if len(sys.argv) > 1:
-    namespace = sys.argv[1]
+parser = argparse.ArgumentParser()
+parser.add_argument("-n", "--namespace", help="Namespace to diff objects against, defaults to current namespace")
+parser.add_argument("--server", help="OpenShift server to diff against")
+parser.add_argument("--token", help="Bearer token for OpenShift authentication")
+args = parser.parse_args()
+if args.namespace:
+    namespace = args.namespace
+if args.server:
+    k8s_config.host = args.server
+if args.token:
+    k8s_config.api_key = {"authorization": "Bearer " + args.token}
 
-k8s_client = kubernetes.client.api_client.ApiClient(kubernetes.client.Configuration())
+k8s_client = kubernetes.client.api_client.ApiClient(k8s_config)
 dyn_client = openshift.dynamic.DynamicClient(k8s_client)
 
 with tempfile.TemporaryDirectory() as tmpdir:
@@ -113,7 +124,6 @@ with tempfile.TemporaryDirectory() as tmpdir:
                 except NotFoundError:
                     pass
 
-    # subprocess.Popen(f"ls -l {tmpdir}/cur", shell=True)
 
     color_opt = '--color' #if sys.stdout.isatty() else ''
     p = subprocess.Popen(f"cd {tmpdir} && git --no-pager diff --no-index --no-prefix --minimal {color_opt} cur new | {SCRIPT_DIR}/diff-highlight", shell=True)
