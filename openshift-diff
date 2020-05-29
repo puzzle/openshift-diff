@@ -9,8 +9,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterable
-from copy import deepcopy
 
 import kubernetes
 import openshift.dynamic
@@ -120,4 +118,3 @@ with tempfile.TemporaryDirectory() as tmpdir:
     color_opt = '--color' #if sys.stdout.isatty() else ''
     p = subprocess.Popen(f"cd {tmpdir} && git --no-pager diff --no-index --no-prefix --minimal {color_opt} cur new | {SCRIPT_DIR}/diff-highlight", shell=True)
     p.communicate()
-
