@@ -21,16 +21,29 @@ from openshift.dynamic.exceptions import NotFoundError
 SCRIPT_DIR = sys.path[0] if os.path.isdir(sys.path[0]) else os.path.dirname(sys.path[0])
 
 
-def del_extra_attributes(cur, last, new):
+def del_extra_keys(cur, last, new):
+    """Delete keys in cur which are neither present in last nor in new, i.e. keys managed by the cluster."""
     if isinstance(cur, dict):
         for key, val in list(cur.items()):
             if last and key in last or new and key in new:
-                del_extra_attributes(val, last.get(key) if last else None, new.get(key) if new else None)
+                del_extra_keys(val, last.get(key) if last else None, new.get(key) if new else None)
             else:
                 del cur[key]
     elif isinstance(cur, list):
         for i, cur_item in enumerate(cur):
-            del_extra_attributes(cur_item, last[i] if last and i < len(last) else None, new[i] if new and i < len(new) else None)
+            del_extra_keys(cur_item, last[i] if last and i < len(last) else None, new[i] if new and i < len(new) else None)
+
+def add_default_keys(cur, last):
+    """Add keys to cur which are present in last but missing in cur, i.e. keys that contain default values."""
+    if isinstance(last, dict):
+        for last_key, last_val in list(last.items()):
+            if cur and last_key in cur:
+                add_default_keys(cur.get(last_key) if cur else None, last_val)
+            else:
+                cur[last_key] = last_val
+    elif isinstance(last, list):
+        for i, last_item in enumerate(last):
+            add_default_keys(cur[i] if cur and i < len(cur) else None, last_item)
 
 
 # Disable SSL warnings: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#ssl-warnings
@@ -74,7 +87,9 @@ with tempfile.TemporaryDirectory() as tmpdir:
                 try:
                     current = obj_client.get(name=obj['metadata']['name'], namespace=namespace, export=True).to_dict()
                     last_applied = json.loads(current['metadata'].get('annotations', {}).get('kubectl.kubernetes.io/last-applied-configuration', '{}'))
-                    del_extra_attributes(current, last_applied, obj)
+                    current['metadata'].get('annotations', {}).pop('kubectl.kubernetes.io/last-applied-configuration', None)
+                    del_extra_keys(current, last_applied, obj)
+                    add_default_keys(current, last_applied)
 
                     yaml.dump(current, file, default_flow_style=False, width=float("inf"))
                 except NotFoundError:
