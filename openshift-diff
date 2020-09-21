@@ -67,6 +67,26 @@ def hash_secret_values(obj):
         obj['data'][key] = f"<hashed-{hashed_value}>"
 
 
+def export_object(dir, obj, new=None):
+    try:
+        with open(f"{dir}/{obj['kind']}_{obj['metadata']['name']}.yaml", 'x') as file:
+            last_applied = json.loads(obj['metadata'].get('annotations', {}).get('kubectl.kubernetes.io/last-applied-configuration', '{}'))
+            if last_applied:
+                del_extra_keys(obj, last_applied, new)
+                add_default_keys(obj, last_applied)
+            obj['metadata'].get('annotations', {}).pop('kubectl.kubernetes.io/last-applied-configuration', None)
+            obj['metadata'].pop('creationTimestamp', None)
+            obj['metadata'].pop('resourceVersion', None)
+            obj['metadata'].pop('selfLink', None)
+            obj['metadata'].pop('uid', None)
+            obj['metadata'].pop('generation', None)
+            obj.pop('status', None)
+            hash_secret_values(obj)
+
+            yaml.dump(obj, file, default_flow_style=False, width=float("inf"))
+    except FileExistsError:
+        pass
+
 # Disable SSL warnings: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#ssl-warnings
 urllib3.disable_warnings()
 
@@ -110,19 +130,12 @@ with tempfile.TemporaryDirectory() as tmpdir:
             with open(f"{tmpdir}/new/{obj['kind']}_{obj['metadata']['name']}.yaml", 'w+') as file:
                 yaml.dump(obj, file, default_flow_style=False, width=float("inf"))
 
-            obj_client = dyn_client.resources.get(api_version = obj['apiVersion'], kind = obj['kind'])
-            with open(f"{tmpdir}/cur/{obj['kind']}_{obj['metadata']['name']}.yaml", 'w+') as file:
-                try:
-                    current = obj_client.get(name=obj['metadata']['name'], namespace=namespace, export=True).to_dict()
-                    last_applied = json.loads(current['metadata'].get('annotations', {}).get('kubectl.kubernetes.io/last-applied-configuration', '{}'))
-                    current['metadata'].get('annotations', {}).pop('kubectl.kubernetes.io/last-applied-configuration', None)
-                    del_extra_keys(current, last_applied, obj)
-                    add_default_keys(current, last_applied)
-                    hash_secret_values(current)
-
-                    yaml.dump(current, file, default_flow_style=False, width=float("inf"))
-                except NotFoundError:
-                    pass
+            try:
+                obj_client = dyn_client.resources.get(api_version = obj['apiVersion'], kind = obj['kind'])
+                current = obj_client.get(name=obj['metadata']['name'], namespace=namespace, export=True).to_dict()
+                export_object(f"{tmpdir}/cur", current, obj)
+            except NotFoundError:
+                pass
 
 
     color_opt = '--color' #if sys.stdout.isatty() else ''
