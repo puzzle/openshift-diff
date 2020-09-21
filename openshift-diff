@@ -101,11 +101,16 @@ k8s_config = kubernetes.client.Configuration()
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-n", "--namespace", help="Namespace to diff objects against, defaults to current namespace")
+parser.add_argument("-l", "--selector", help="Selector (label query) to add objects to diff in order to detect removed resources, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2)")
 parser.add_argument("--server", help="OpenShift server to diff against")
 parser.add_argument("--token", help="Bearer token for OpenShift authentication")
 args = parser.parse_args()
 if args.namespace:
     namespace = args.namespace
+if args.selector:
+    label_selector = args.selector
+else:
+    label_selector = None
 if args.server:
     k8s_config.host = args.server
 if args.token:
@@ -113,6 +118,42 @@ if args.token:
 
 k8s_client = kubernetes.client.api_client.ApiClient(k8s_config)
 dyn_client = openshift.dynamic.DynamicClient(k8s_client)
+
+# from kubectl/pkg/cmd/apply/prune.go
+
+pruneResources = [
+    "v1/ConfigMap",
+    #"v1/Endpoints",
+    "v1/Namespace",
+	"v1/PersistentVolumeClaim",
+	"v1/PersistentVolume",
+	#"v1/Pod",
+	#"v1/ReplicationController",
+	"v1/Secret",
+	"v1/Service",
+	"batch/v1/Job",
+	"batch/v1beta1/CronJob",
+	"extensions/v1beta1/Ingress",
+	"apps/v1/DaemonSet",
+	"apps/v1/Deployment",
+	"apps/v1/ReplicaSet",
+	"apps/v1/StatefulSet",
+    "route.openshift.io/v1/Route",
+    "monitoring.coreos.com/v1/Alertmanager",
+    "monitoring.coreos.com/v1/Prometheus",
+    "monitoring.coreos.com/v1/PrometheusRule",
+    "monitoring.coreos.com/v1/ServiceMonitor",
+    "build.openshift.io/v1/BuildConfig",
+    "apps.openshift.io/v1/DeploymentConfig",
+    "image.openshift.io/v1/ImageStream",
+    "extensions/v1beta1/NetworkPolicy",
+    "networking.k8s.io/v1/NetworkPolicy",
+    "authorization.openshift.io/v1/RoleBinding",
+    "rbac.authorization.k8s.io/v1/RoleBinding",
+    "authorization.openshift.io/v1/Role",
+    "rbac.authorization.k8s.io/v1/Role",
+]
+
 
 with tempfile.TemporaryDirectory() as tmpdir:
     os.makedirs(f"{tmpdir}/new", exist_ok=True)
@@ -136,6 +177,18 @@ with tempfile.TemporaryDirectory() as tmpdir:
                 export_object(f"{tmpdir}/cur", current, obj)
             except NotFoundError:
                 pass
+
+    if label_selector:
+        for resource in pruneResources:
+            api_version, _, kind = resource.rpartition('/')
+            #try:
+            objects = dyn_client.resources.get(api_version=api_version, kind=kind).get(namespace=namespace, label_selector=label_selector).to_dict()
+            #except openshift.dynamic.exceptions.ResourceNotFoundError:
+            #    continue
+            for obj in objects['items']:
+                #print(f"{obj['kind']}/{obj['metadata']['name']}")
+                if obj['metadata'].get('annotations', {}).get('kubectl.kubernetes.io/last-applied-configuration') or obj['metadata'].get('annotations', {}).get('openshift.io/generated-by'):
+                    export_object(f"{tmpdir}/cur", obj)
 
 
     color_opt = '--color' #if sys.stdout.isatty() else ''
