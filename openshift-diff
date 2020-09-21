@@ -59,12 +59,16 @@ def hash_secret_values(obj):
         return
 
     for key, value in obj.get('stringData', {}).items():
-        obj.setdefault('data', {})[key] = base64.b64encode(value.encode('ascii')).decode('ascii')
+        if value is not None:
+            obj.setdefault('data', {})[key] = base64.b64encode(value.encode('ascii')).decode('ascii')
+        else:
+            obj.setdefault('data', {})[key] = None
     obj.pop('stringData', None)
 
     for key, value in obj.get('data', {}).items():
-        hashed_value = hashlib.sha1(value.encode()).hexdigest()[0:7]
-        obj['data'][key] = f"<hashed-{hashed_value}>"
+        if value:
+            hashed_value = hashlib.sha1(value.encode()).hexdigest()[0:7]
+            obj['data'][key] = f"<hashed-{hashed_value}>"
 
 
 def export_object(dir, obj, new=None):
