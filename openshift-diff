@@ -20,6 +20,13 @@ from openshift.dynamic.exceptions import NotFoundError
 
 SCRIPT_DIR = sys.path[0] if os.path.isdir(sys.path[0]) else os.path.dirname(sys.path[0])
 
+class ArgumentParser(argparse.ArgumentParser):
+
+    def error(self, message):
+        print(sys.argv, file=sys.stderr)
+        print(file=sys.stderr)
+        super(ArgumentParser, self).error(message)
+
 def str_presenter(dumper, data):
     if isinstance(data, str):
         if '\n' in data:
@@ -103,7 +110,7 @@ else:
     namespace = active_context['context']['namespace']
 k8s_config = kubernetes.client.Configuration()
 
-parser = argparse.ArgumentParser()
+parser = ArgumentParser()
 parser.add_argument("-n", "--namespace", help="Namespace to diff objects against, defaults to current namespace")
 parser.add_argument("-l", "--selector", help="Selector (label query) to add objects to diff in order to detect removed resources, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2)")
 parser.add_argument("--server", help="OpenShift server to diff against")
