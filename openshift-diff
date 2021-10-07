@@ -115,6 +115,7 @@ parser.add_argument("-n", "--namespace", help="Namespace to diff objects against
 parser.add_argument("-l", "--selector", help="Selector (label query) to add objects to diff in order to detect removed resources, supports '=', '==', and '!='.(e.g. -l key1=value1,key2=value2)")
 parser.add_argument("--server", help="OpenShift server to diff against")
 parser.add_argument("--token", help="Bearer token for OpenShift authentication")
+parser.add_argument("--insecure-skip-tls-verify", help="Disabled TLS certificate verification", action='store_true')
 args = parser.parse_args()
 if args.namespace:
     namespace = args.namespace
@@ -126,6 +127,8 @@ if args.server:
     k8s_config.host = args.server
 if args.token:
     k8s_config.api_key = {"authorization": "Bearer " + args.token}
+if args.insecure_skip_tls_verify:
+    k8s_config.verify_ssl = False
 
 k8s_client = kubernetes.client.api_client.ApiClient(k8s_config)
 dyn_client = openshift.dynamic.DynamicClient(k8s_client)
