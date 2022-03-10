@@ -91,6 +91,7 @@ def export_object(dir, obj, new=None):
             obj['metadata'].pop('selfLink', None)
             obj['metadata'].pop('uid', None)
             obj['metadata'].pop('generation', None)
+            obj['metadata'].pop('managedFields', None)
             obj.pop('status', None)
             hash_secret_values(obj)
 
